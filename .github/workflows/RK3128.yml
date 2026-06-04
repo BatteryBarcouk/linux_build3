@@ -57,6 +57,8 @@ jobs:
         scripts/config --disable CONFIG_RTL8188EU
         scripts/config --disable CONFIG_ROCKCHIP_WLAN
         scripts/config --disable CONFIG_USB_GADGET
+        scripts/config --disable CONFIG_ARM_PATCH_PHYS_VIRT
+        scripts/config --disable CONFIG_ROCKCHIP_PIE
         make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- olddefconfig
 
     - name: Build kernel
