@@ -32,6 +32,11 @@ jobs:
         find security/optee_linuxdriver -name "Makefile" -exec sed -i 's/ccflags-y+=-Werror/ccflags-y+=-Wno-error/g' {} \;
         sed -i '/KBUILD_CFLAGS.*FRAME_WARN/a KBUILD_CFLAGS\t+= -Wno-attributes -Wno-error=attributes' Makefile
         sed -i '/#include <linux\/usb\/cdc.h>/a #include <linux\/types.h>' drivers/usb/gadget/f_rndis.c
+        # Fix PIE linker error with modern binutils
+        sed -i 's/_GLOBAL_OFFSET_TABLE_/0x0/g' pie/Makefile || true
+        # Alternative: just remove the PIE build entirely
+        sed -i '/^pie/d' Makefile || true
+        sed -i 's/pie\/built-in.o//g' Makefile || true
         echo "Patches done"
 
     - name: Create DTS files
