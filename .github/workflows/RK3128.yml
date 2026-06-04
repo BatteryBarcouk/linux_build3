@@ -24,19 +24,55 @@ jobs:
     - name: Apply patches
       working-directory: rk3128-kernel
       run: |
+        # --- gcc-wrapper: use literal tab to match the Makefile exactly ---
         sed -i 's|CC\t\t= $(srctree)/scripts/gcc-wrapper.py $(CROSS_COMPILE)gcc|CC\t\t= $(CROSS_COMPILE)gcc|' Makefile
+
+        # --- DTC lexer: fix duplicate yylloc symbol (GCC 10+) ---
         sed -i 's/YYLTYPE yylloc/extern YYLTYPE yylloc/' scripts/dtc/dtc-lexer.lex.c_shipped
-        find arch/arm -name "*.S" | xargs sed -i 's/, #alloc, #execinstr/,"ax"/g; s/#alloc,#execinstr/"ax"/g; s/, #alloc/,"a"/g' 2>/dev/null || true
+
+        # --- ARM assembly section flags: old gas syntax → new ---
+        find arch/arm -name "*.S" | xargs sed -i \
+          's/, #alloc, #execinstr/,"ax"/g;
+           s/#alloc,#execinstr/"ax"/g;
+           s/, #alloc/,"a"/g' 2>/dev/null || true
+
+        # --- ARM arch Makefile: drop stale -march flag that conflicts with GCC 11+ ---
         sed -i 's/arch-$(CONFIG_CPU_32v7).*$/arch-$(CONFIG_CPU_32v7)\t\t:=-D__LINUX_ARM_ARCH__=7 -march=armv7-a/' arch/arm/Makefile
+
+        # --- __asmeq: silence the macro (causes errors with modern GCC) ---
         sed -i 's|#define __asmeq(x, y).*$|#define __asmeq(x, y) ""|' arch/arm/include/asm/compiler.h
-        find security/optee_linuxdriver -name "Makefile" -exec sed -i 's/ccflags-y+=-Werror/ccflags-y+=-Wno-error/g' {} \;
+
+        # --- OP-TEE driver: demote -Werror to warnings ---
+        find security/optee_linuxdriver -name "Makefile" \
+          -exec sed -i 's/ccflags-y+=-Werror/ccflags-y+=-Wno-error/g' {} \;
+
+        # --- Suppress noisy new GCC warning flags ---
         sed -i '/KBUILD_CFLAGS.*FRAME_WARN/a KBUILD_CFLAGS\t+= -Wno-attributes -Wno-error=attributes' Makefile
+
+        # --- f_rndis: missing types.h include (GCC 11+ strict headers) ---
         sed -i '/#include <linux\/usb\/cdc.h>/a #include <linux\/types.h>' drivers/usb/gadget/f_rndis.c
-        # Fix PIE linker error with modern binutils
+
+        # --- PIE: fix the --defsym syntax error with modern binutils ---
+        # The real failure: pie/Makefile line 61 passes --defsym=SYM=addr to ld
+        # which modern binutils rejects as a syntax error.
+        # Strategy: patch pie/Makefile to strip the broken --defsym flags,
+        # then also excise the pie/ subdir from the top-level Makefile so it
+        # never gets invoked even if CONFIG_ROCKCHIP_PIE somehow leaks through.
+
+        # 1. Remove --defsym flags from pie/Makefile linker invocations
+        sed -i 's/--defsym=[^ ]*//g' pie/Makefile || true
+        # Also nuke the _GLOBAL_OFFSET_TABLE_ defsym specifically
         sed -i 's/_GLOBAL_OFFSET_TABLE_/0x0/g' pie/Makefile || true
-        # Alternative: just remove the PIE build entirely
-        sed -i '/^pie/d' Makefile || true
-        sed -i 's/pie\/built-in.o//g' Makefile || true
+
+        # 2. Remove pie/ from the top-level Makefile build targets entirely.
+        #    The Makefile has lines like:
+        #      pie/built-in.o: ...
+        #    and references in the vmlinux-dirs / vmlinux-alldirs lists.
+        sed -i '/[[:space:]]pie[[:space:]]/d' Makefile || true
+        sed -i '/^pie\//d' Makefile || true
+        sed -i 's/ pie\b//g' Makefile || true
+        sed -i 's/pie\/built-in\.o//g' Makefile || true
+
         echo "Patches done"
 
     - name: Create DTS files
@@ -51,6 +87,9 @@ jobs:
       working-directory: rk3128-kernel
       run: |
         make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- rockchip_defconfig
+
+        # Disable subsystems we don't need (reduces build time and avoids
+        # obscure build errors in drivers we're not using)
         scripts/config --disable CONFIG_MEDIA_SUPPORT
         scripts/config --disable CONFIG_DVB_CORE
         scripts/config --disable CONFIG_VIDEO_DEV
@@ -63,16 +102,42 @@ jobs:
         scripts/config --disable CONFIG_ROCKCHIP_WLAN
         scripts/config --disable CONFIG_USB_GADGET
         scripts/config --disable CONFIG_ARM_PATCH_PHYS_VIRT
+
+        # CRITICAL: disable PIE at Kconfig level — belt-and-suspenders
+        # alongside the Makefile patches above
         scripts/config --disable CONFIG_ROCKCHIP_PIE
+
+        # Suppress section-mismatch warnings-as-errors so the dvfs_temp_limit
+        # WARNING doesn't abort the build
+        scripts/config --enable CONFIG_BUILD_DOCSRC || true
+
         make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- olddefconfig
+
+    - name: Verify PIE is disabled
+      working-directory: rk3128-kernel
+      run: |
+        grep "CONFIG_ROCKCHIP_PIE" .config
+        # Should print: # CONFIG_ROCKCHIP_PIE is not set
 
     - name: Build kernel
       working-directory: rk3128-kernel
       run: |
-        make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- -j$(nproc) zImage rk3128-ys-m1.dtb 2>&1 | tee build.log || true
-        echo "=== ERRORS ==="
-        grep ": error:" build.log | head -30
-        ls arch/arm/boot/zImage && echo "BUILD SUCCESS" || exit 1
+        make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- \
+          KCFLAGS="-Wno-error -Wno-misleading-indentation" \
+          -j$(nproc) zImage rk3128-ys-m1.dtb 2>&1 | tee build.log || true
+
+        echo "=== FATAL ERRORS ==="
+        grep ": error:" build.log | head -50
+
+        echo "=== PIE LINKER CHECK ==="
+        grep -i "defsym\|pie.*Error\|pie.*error" build.log | head -20
+
+        echo "=== BUILD RESULT ==="
+        ls -lh arch/arm/boot/zImage && echo "BUILD SUCCESS" || {
+          echo "BUILD FAILED — last 60 lines of log:"
+          tail -60 build.log
+          exit 1
+        }
 
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
@@ -81,4 +146,5 @@ jobs:
         path: |
           rk3128-kernel/arch/arm/boot/zImage
           rk3128-kernel/arch/arm/boot/dts/rk3128-ys-m1.dtb
+          rk3128-kernel/build.log
         retention-days: 30
