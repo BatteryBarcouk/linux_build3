@@ -14,137 +14,38 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y gcc-arm-linux-gnueabihf make bc libssl-dev \
-          bison flex device-tree-compiler git
+        sudo apt-get install -y gcc-arm-linux-gnueabihf make bc libssl-dev bison flex device-tree-compiler git
         arm-linux-gnueabihf-gcc --version
 
     - name: Clone kernel
       run: |
-        git clone --depth=1 -b release-3.10 \
-          https://github.com/rockchip-linux/kernel.git rk3128-kernel
+        git clone --depth=1 -b release-3.10 https://github.com/rockchip-linux/kernel.git rk3128-kernel
 
     - name: Apply patches
       working-directory: rk3128-kernel
       run: |
-        # Disable gcc-wrapper
-        sed -i 's|CC\t\t= \$(srctree)/scripts/gcc-wrapper.py \$(CROSS_COMPILE)gcc|CC\t\t= $(CROSS_COMPILE)gcc|' Makefile
-
-        # Fix dtc build
+        sed -i 's|CC\t\t= $(srctree)/scripts/gcc-wrapper.py $(CROSS_COMPILE)gcc|CC\t\t= $(CROSS_COMPILE)gcc|' Makefile
         sed -i 's/YYLTYPE yylloc/extern YYLTYPE yylloc/' scripts/dtc/dtc-lexer.lex.c_shipped
-
-        # Fix ARM assembly section flags
-        find arch/arm -name "*.S" | xargs sed -i \
-          's/, #alloc, #execinstr/,"ax"/g; s/#alloc,#execinstr/"ax"/g; s/, #alloc/,"a"/g' 2>/dev/null || true
-
-        # Force armv7-a
-        sed -i 's/arch-\$(CONFIG_CPU_32v7)\t\t:=-D__LINUX_ARM_ARCH__=7 \$(call cc-option,-march=armv7-a,-march=armv5t -Wa\$(comma)-march=armv7-a)/arch-$(CONFIG_CPU_32v7)\t\t:=-D__LINUX_ARM_ARCH__=7 -march=armv7-a/' arch/arm/Makefile
-
-        # Disable __asmeq
+        find arch/arm -name "*.S" | xargs sed -i 's/, #alloc, #execinstr/,"ax"/g; s/#alloc,#execinstr/"ax"/g; s/, #alloc/,"a"/g' 2>/dev/null || true
+        sed -i 's/arch-$(CONFIG_CPU_32v7).*$/arch-$(CONFIG_CPU_32v7)\t\t:=-D__LINUX_ARM_ARCH__=7 -march=armv7-a/' arch/arm/Makefile
         sed -i 's|#define __asmeq(x, y).*$|#define __asmeq(x, y) ""|' arch/arm/include/asm/compiler.h
-
-        # Fix Werror in optee
-        find security/optee_linuxdriver -name "Makefile" -exec \
-          sed -i 's/ccflags-y+=-Werror/ccflags-y+=-Wno-error/g' {} \;
-
-        # Suppress log2.h warning
+        find security/optee_linuxdriver -name "Makefile" -exec sed -i 's/ccflags-y+=-Werror/ccflags-y+=-Wno-error/g' {} \;
         sed -i '/KBUILD_CFLAGS.*FRAME_WARN/a KBUILD_CFLAGS\t+= -Wno-attributes -Wno-error=attributes' Makefile
-
-        # Fix f_rndis.c
         sed -i '/#include <linux\/usb\/cdc.h>/a #include <linux\/types.h>' drivers/usb/gadget/f_rndis.c
-
         echo "Patches done"
 
-    - name: Create YS-M1 DTS files
+    - name: Create DTS files
       working-directory: rk3128-kernel
       run: |
-        cat > arch/arm/boot/dts/lcd-ys-m1-ili9881c-mipi.dtsi << 'DTSI'
-#include <dt-bindings/rkmipi/mipi_dsi.h>
-/ {
-  disp_mipi_init: mipi_dsi_init {
-    compatible = "rockchip,mipi_dsi_init";
-    rockchip,screen_init = <1>;
-    rockchip,dsi_lane = <4>;
-    rockchip,dsi_hs_clk = <500>;
-    rockchip,mipi_dsi_num = <1>;
-  };
-  disp_mipi_power_ctr: mipi_power_ctr {
-    compatible = "rockchip,mipi_power_ctr";
-  };
-  disp_mipi_init_cmds: screen-on-cmds {
-    compatible = "rockchip,screen-on-cmds";
-    rockchip,cmd_debug = <1>;
-    rockchip,on-cmds1   { compatible="rockchip,on-cmds"; rockchip,cmd_type=<LPDT>; rockchip,dsi_id=<0>; rockchip,cmd=<0x15 0xe0 0x00>; rockchip,cmd_delay=<0>; };
-    rockchip,on-cmds2   { compatible="rockchip,on-cmds"; rockchip,cmd_type=<LPDT>; rockchip,dsi_id=<0>; rockchip,cmd=<0x15 0xe1 0x93>; rockchip,cmd_delay=<0>; };
-    rockchip,on-cmds3   { compatible="rockchip,on-cmds"; rockchip,cmd_type=<LPDT>; rockchip,dsi_id=<0>; rockchip,cmd=<0x15 0xe2 0x65>; rockchip,cmd_delay=<0>; };
-    rockchip,on-cmds4   { compatible="rockchip,on-cmds"; rockchip,cmd_type=<LPDT>; rockchip,dsi_id=<0>; rockchip,cmd=<0x15 0xe3 0xf8>; rockchip,cmd_delay=<0>; };
-    rockchip,on-cmds5   { compatible="rockchip,on-cmds"; rockchip,cmd_type=<LPDT>; rockchip,dsi_id=<0>; rockchip,cmd=<0x15 0x80 0x03>; rockchip,cmd_delay=<0>; };
-    rockchip,on-cmds6   { compatible="rockchip,on-cmds"; rockchip,cmd_type=<LPDT>; rockchip,dsi_id=<0>; rockchip,cmd=<0x15 0xe0 0x01>; rockchip,cmd_delay=<0>; };
-    rockchip,on-cmds7   { compatible="rockchip,on-cmds"; rockchip,cmd_type=<LPDT>; rockchip,dsi_id=<0>; rockchip,cmd=<0x15 0x00 0x00>; rockchip,cmd_delay=<0>; };
-    rockchip,on-cmds8   { compatible="rockchip,on-cmds"; rockchip,cmd_type=<LPDT>; rockchip,dsi_id=<0>; rockchip,cmd=<0x15 0x01 0xa0>; rockchip,cmd_delay=<0>; };
-    rockchip,on-cmds9   { compatible="rockchip,on-cmds"; rockchip,cmd_type=<LPDT>; rockchip,dsi_id=<0>; rockchip,cmd=<0x15 0x17 0x00>; rockchip,cmd_delay=<0>; };
-    rockchip,on-cmds10  { compatible="rockchip,on-cmds"; rockchip,cmd_type=<LPDT>; rockchip,dsi_id=<0>; rockchip,cmd=<0x15 0x18 0xb1>; rockchip,cmd_delay=<0>; };
-    rockchip,on-cmds11  { compatible="rockchip,on-cmds"; rockchip,cmd_type=<LPDT>; rockchip,dsi_id=<0>; rockchip,cmd=<0x15 0x19 0x01>; rockchip,cmd_delay=<0>; };
-    rockchip,on-cmds12  { compatible="rockchip,on-cmds"; rockchip,cmd_type=<LPDT>; rockchip,dsi_id=<0>; rockchip,cmd=<0x15 0x1a 0x00>; rockchip,cmd_delay=<0>; };
-    rockchip,on-cmds13  { compatible="rockchip,on-cmds"; rockchip,cmd_type=<LPDT>; rockchip,dsi_id=<0>; rockchip,cmd=<0x15 0x1b 0xb1>; rockchip,cmd_delay=<0>; };
-    rockchip,on-cmds14  { compatible="rockchip,on-cmds"; rockchip,cmd_type=<LPDT>; rockchip,dsi_id=<0>; rockchip,cmd=<0x15 0x1c 0x01>; rockchip,cmd_delay=<0>; };
-    rockchip,on-cmds15  { compatible="rockchip,on-cmds"; rockchip,cmd_type=<LPDT>; rockchip,dsi_id=<0>; rockchip,cmd=<0x15 0x1f 0x3e>; rockchip,cmd_delay=<0>; };
-    rockchip,on-cmds16  { compatible="rockchip,on-cmds"; rockchip,cmd_type=<LPDT>; rockchip,dsi_id=<0>; rockchip,cmd=<0x15 0x20 0x28>; rockchip,cmd_delay=<0>; };
-    rockchip,on-cmds17  { compatible="rockchip,on-cmds"; rockchip,cmd_type=<LPDT>; rockchip,dsi_id=<0>; rockchip,cmd=<0x15 0x21 0x28>; rockchip,cmd_delay=<0>; };
-    rockchip,on-cmds18  { compatible="rockchip,on-cmds"; rockchip,cmd_type=<LPDT>; rockchip,dsi_id=<0>; rockchip,cmd=<0x15 0x22 0x0e>; rockchip,cmd_delay=<0>; };
-    rockchip,on-cmds19  { compatible="rockchip,on-cmds"; rockchip,cmd_type=<LPDT>; rockchip,dsi_id=<0>; rockchip,cmd=<0x15 0x26 0xf1>; rockchip,cmd_delay=<0>; };
-    rockchip,on-cmds20  { compatible="rockchip,on-cmds"; rockchip,cmd_type=<LPDT>; rockchip,dsi_id=<0>; rockchip,cmd=<0x15 0x37 0x19>; rockchip,cmd_delay=<0>; };
-    rockchip,on-cmds150 { compatible="rockchip,on-cmds"; rockchip,cmd_type=<LPDT>; rockchip,dsi_id=<0>; rockchip,cmd=<0x15 0x11 0x00>; rockchip,cmd_delay=<120>; };
-    rockchip,on-cmds151 { compatible="rockchip,on-cmds"; rockchip,cmd_type=<LPDT>; rockchip,dsi_id=<0>; rockchip,cmd=<0x15 0x29 0x00>; rockchip,cmd_delay=<20>; };
-  };
-  disp_timings: display-timings {
-    compatible = "rockchip,display-timings";
-    native-mode = <&timing0>;
-    timing0: timing0 {
-      screen-type = <SCREEN_MIPI>;
-      lvds-format = <LVDS_8BIT_1>;
-      out-face = <OUT_P888>;
-      clock-frequency = <68000000>;
-      hactive = <800>; vactive = <1280>;
-      hback-porch = <48>; hfront-porch = <16>; hsync-len = <16>;
-      vback-porch = <16>; vfront-porch = <8>; vsync-len = <8>;
-      hsync-active = <0>; vsync-active = <0>;
-      de-active = <0>; pixelclk-active = <0>;
-      swap-rb = <0>; swap-rg = <0>; swap-gb = <0>;
-    };
-  };
-};
-DTSI
-
-        cat > arch/arm/boot/dts/rk3128-ys-m1.dts << 'DTS'
-/dts-v1/;
-#include "rk3128.dtsi"
-#include "rk312x-sdk.dtsi"
-#include "lcd-ys-m1-ili9881c-mipi.dtsi"
-/ {
-  model = "Yisheng YS-M1 RK3128";
-  compatible = "rockchip,rk3128";
-  memory { device_type = "memory"; reg = <0x60000000 0x40000000>; };
-  backlight: backlight {
-    compatible = "pwm-backlight";
-    pwms = <&pwm0 0 25000 0>;
-    brightness-levels = <0 64 128 192 255>;
-    default-brightness-level = <4>;
-  };
-};
-&pwm0 { status = "okay"; };
-&rk_screen { display-timings = <&disp_timings>; };
-&dsihost0 { status = "okay"; };
-&lcdc { status = "okay"; backlight = <&backlight>; };
-&fb { rockchip,disp-mode = <NO_DUAL>; rockchip,uboot-logo-on = <0>; };
-DTS
-
+        echo "I2luY2x1ZGUgPGR0LWJpbmRpbmdzL3JrbWlwaS9taXBpX2RzaS5oPgovIHsKICBkaXNwX21pcGlfaW5pdDogbWlwaV9kc2lfaW5pdCB7CiAgICBjb21wYXRpYmxlID0gInJvY2tjaGlwLG1pcGlfZHNpX2luaXQiOwogICAgcm9ja2NoaXAsc2NyZWVuX2luaXQgPSA8MT47CiAgICByb2NrY2hpcCxkc2lfbGFuZSA9IDw0PjsKICAgIHJvY2tjaGlwLGRzaV9oc19jbGsgPSA8NTAwPjsKICAgIHJvY2tjaGlwLG1pcGlfZHNpX251bSA9IDwxPjsKICB9OwogIGRpc3BfbWlwaV9wb3dlcl9jdHI6IG1pcGlfcG93ZXJfY3RyIHsKICAgIGNvbXBhdGlibGUgPSAicm9ja2NoaXAsbWlwaV9wb3dlcl9jdHIiOwogIH07CiAgZGlzcF9taXBpX2luaXRfY21kczogc2NyZWVuLW9uLWNtZHMgewogICAgY29tcGF0aWJsZSA9ICJyb2NrY2hpcCxzY3JlZW4tb24tY21kcyI7CiAgICByb2NrY2hpcCxjbWRfZGVidWcgPSA8MT47CiAgICByb2NrY2hpcCxvbi1jbWRzMSAgIHsgY29tcGF0aWJsZT0icm9ja2NoaXAsb24tY21kcyI7IHJvY2tjaGlwLGNtZF90eXBlPTxMUERUPjsgcm9ja2NoaXAsZHNpX2lkPTwwPjsgcm9ja2NoaXAsY21kPTwweDE1IDB4ZTAgMHgwMD47IHJvY2tjaGlwLGNtZF9kZWxheT08MD47IH07CiAgICByb2NrY2hpcCxvbi1jbWRzMiAgIHsgY29tcGF0aWJsZT0icm9ja2NoaXAsb24tY21kcyI7IHJvY2tjaGlwLGNtZF90eXBlPTxMUERUPjsgcm9ja2NoaXAsZHNpX2lkPTwwPjsgcm9ja2NoaXAsY21kPTwweDE1IDB4ZTEgMHg5Mz47IHJvY2tjaGlwLGNtZF9kZWxheT08MD47IH07CiAgICByb2NrY2hpcCxvbi1jbWRzMyAgIHsgY29tcGF0aWJsZT0icm9ja2NoaXAsb24tY21kcyI7IHJvY2tjaGlwLGNtZF90eXBlPTxMUERUPjsgcm9ja2NoaXAsZHNpX2lkPTwwPjsgcm9ja2NoaXAsY21kPTwweDE1IDB4ZTIgMHg2NT47IHJvY2tjaGlwLGNtZF9kZWxheT08MD47IH07CiAgICByb2NrY2hpcCxvbi1jbWRzNCAgIHsgY29tcGF0aWJsZT0icm9ja2NoaXAsb24tY21kcyI7IHJvY2tjaGlwLGNtZF90eXBlPTxMUERUPjsgcm9ja2NoaXAsZHNpX2lkPTwwPjsgcm9ja2NoaXAsY21kPTwweDE1IDB4ZTMgMHhmOD47IHJvY2tjaGlwLGNtZF9kZWxheT08MD47IH07CiAgICByb2NrY2hpcCxvbi1jbWRzNSAgIHsgY29tcGF0aWJsZT0icm9ja2NoaXAsb24tY21kcyI7IHJvY2tjaGlwLGNtZF90eXBlPTxMUERUPjsgcm9ja2NoaXAsZHNpX2lkPTwwPjsgcm9ja2NoaXAsY21kPTwweDE1IDB4ODAgMHgwMz47IHJvY2tjaGlwLGNtZF9kZWxheT08MD47IH07CiAgICByb2NrY2hpcCxvbi1jbWRzNiAgIHsgY29tcGF0aWJsZT0icm9ja2NoaXAsb24tY21kcyI7IHJvY2tjaGlwLGNtZF90eXBlPTxMUERUPjsgcm9ja2NoaXAsZHNpX2lkPTwwPjsgcm9ja2NoaXAsY21kPTwweDE1IDB4ZTAgMHgwMT47IHJvY2tjaGlwLGNtZF9kZWxheT08MD47IH07CiAgICByb2NrY2hpcCxvbi1jbWRzNyAgIHsgY29tcGF0aWJsZT0icm9ja2NoaXAsb24tY21kcyI7IHJvY2tjaGlwLGNtZF90eXBlPTxMUERUPjsgcm9ja2NoaXAsZHNpX2lkPTwwPjsgcm9ja2NoaXAsY21kPTwweDE1IDB4MDAgMHgwMD47IHJvY2tjaGlwLGNtZF9kZWxheT08MD47IH07CiAgICByb2NrY2hpcCxvbi1jbWRzOCAgIHsgY29tcGF0aWJsZT0icm9ja2NoaXAsb24tY21kcyI7IHJvY2tjaGlwLGNtZF90eXBlPTxMUERUPjsgcm9ja2NoaXAsZHNpX2lkPTwwPjsgcm9ja2NoaXAsY21kPTwweDE1IDB4MDEgMHhhMD47IHJvY2tjaGlwLGNtZF9kZWxheT08MD47IH07CiAgICByb2NrY2hpcCxvbi1jbWRzOSAgIHsgY29tcGF0aWJsZT0icm9ja2NoaXAsb24tY21kcyI7IHJvY2tjaGlwLGNtZF90eXBlPTxMUERUPjsgcm9ja2NoaXAsZHNpX2lkPTwwPjsgcm9ja2NoaXAsY21kPTwweDE1IDB4MTcgMHgwMD47IHJvY2tjaGlwLGNtZF9kZWxheT08MD47IH07CiAgICByb2NrY2hpcCxvbi1jbWRzMTAgIHsgY29tcGF0aWJsZT0icm9ja2NoaXAsb24tY21kcyI7IHJvY2tjaGlwLGNtZF90eXBlPTxMUERUPjsgcm9ja2NoaXAsZHNpX2lkPTwwPjsgcm9ja2NoaXAsY21kPTwweDE1IDB4MTggMHhiMT47IHJvY2tjaGlwLGNtZF9kZWxheT08MD47IH07CiAgICByb2NrY2hpcCxvbi1jbWRzMTEgIHsgY29tcGF0aWJsZT0icm9ja2NoaXAsb24tY21kcyI7IHJvY2tjaGlwLGNtZF90eXBlPTxMUERUPjsgcm9ja2NoaXAsZHNpX2lkPTwwPjsgcm9ja2NoaXAsY21kPTwweDE1IDB4MTkgMHgwMT47IHJvY2tjaGlwLGNtZF9kZWxheT08MD47IH07CiAgICByb2NrY2hpcCxvbi1jbWRzMTIgIHsgY29tcGF0aWJsZT0icm9ja2NoaXAsb24tY21kcyI7IHJvY2tjaGlwLGNtZF90eXBlPTxMUERUPjsgcm9ja2NoaXAsZHNpX2lkPTwwPjsgcm9ja2NoaXAsY21kPTwweDE1IDB4MWEgMHgwMD47IHJvY2tjaGlwLGNtZF9kZWxheT08MD47IH07CiAgICByb2NrY2hpcCxvbi1jbWRzMTMgIHsgY29tcGF0aWJsZT0icm9ja2NoaXAsb24tY21kcyI7IHJvY2tjaGlwLGNtZF90eXBlPTxMUERUPjsgcm9ja2NoaXAsZHNpX2lkPTwwPjsgcm9ja2NoaXAsY21kPTwweDE1IDB4MWIgMHhiMT47IHJvY2tjaGlwLGNtZF9kZWxheT08MD47IH07CiAgICByb2NrY2hpcCxvbi1jbWRzMTQgIHsgY29tcGF0aWJsZT0icm9ja2NoaXAsb24tY21kcyI7IHJvY2tjaGlwLGNtZF90eXBlPTxMUERUPjsgcm9ja2NoaXAsZHNpX2lkPTwwPjsgcm9ja2NoaXAsY21kPTwweDE1IDB4MWMgMHgwMT47IHJvY2tjaGlwLGNtZF9kZWxheT08MD47IH07CiAgICByb2NrY2hpcCxvbi1jbWRzMTUgIHsgY29tcGF0aWJsZT0icm9ja2NoaXAsb24tY21kcyI7IHJvY2tjaGlwLGNtZF90eXBlPTxMUERUPjsgcm9ja2NoaXAsZHNpX2lkPTwwPjsgcm9ja2NoaXAsY21kPTwweDE1IDB4MWYgMHgzZT47IHJvY2tjaGlwLGNtZF9kZWxheT08MD47IH07CiAgICByb2NrY2hpcCxvbi1jbWRzMTYgIHsgY29tcGF0aWJsZT0icm9ja2NoaXAsb24tY21kcyI7IHJvY2tjaGlwLGNtZF90eXBlPTxMUERUPjsgcm9ja2NoaXAsZHNpX2lkPTwwPjsgcm9ja2NoaXAsY21kPTwweDE1IDB4MjAgMHgyOD47IHJvY2tjaGlwLGNtZF9kZWxheT08MD47IH07CiAgICByb2NrY2hpcCxvbi1jbWRzMTcgIHsgY29tcGF0aWJsZT0icm9ja2NoaXAsb24tY21kcyI7IHJvY2tjaGlwLGNtZF90eXBlPTxMUERUPjsgcm9ja2NoaXAsZHNpX2lkPTwwPjsgcm9ja2NoaXAsY21kPTwweDE1IDB4MjEgMHgyOD47IHJvY2tjaGlwLGNtZF9kZWxheT08MD47IH07CiAgICByb2NrY2hpcCxvbi1jbWRzMTggIHsgY29tcGF0aWJsZT0icm9ja2NoaXAsb24tY21kcyI7IHJvY2tjaGlwLGNtZF90eXBlPTxMUERUPjsgcm9ja2NoaXAsZHNpX2lkPTwwPjsgcm9ja2NoaXAsY21kPTwweDE1IDB4MjIgMHgwZT47IHJvY2tjaGlwLGNtZF9kZWxheT08MD47IH07CiAgICByb2NrY2hpcCxvbi1jbWRzMTkgIHsgY29tcGF0aWJsZT0icm9ja2NoaXAsb24tY21kcyI7IHJvY2tjaGlwLGNtZF90eXBlPTxMUERUPjsgcm9ja2NoaXAsZHNpX2lkPTwwPjsgcm9ja2NoaXAsY21kPTwweDE1IDB4MjYgMHhmMT47IHJvY2tjaGlwLGNtZF9kZWxheT08MD47IH07CiAgICByb2NrY2hpcCxvbi1jbWRzMjAgIHsgY29tcGF0aWJsZT0icm9ja2NoaXAsb24tY21kcyI7IHJvY2tjaGlwLGNtZF90eXBlPTxMUERUPjsgcm9ja2NoaXAsZHNpX2lkPTwwPjsgcm9ja2NoaXAsY21kPTwweDE1IDB4MzcgMHgxOT47IHJvY2tjaGlwLGNtZF9kZWxheT08MD47IH07CiAgICByb2NrY2hpcCxvbi1jbWRzMTUwIHsgY29tcGF0aWJsZT0icm9ja2NoaXAsb24tY21kcyI7IHJvY2tjaGlwLGNtZF90eXBlPTxMUERUPjsgcm9ja2NoaXAsZHNpX2lkPTwwPjsgcm9ja2NoaXAsY21kPTwweDE1IDB4MTEgMHgwMD47IHJvY2tjaGlwLGNtZF9kZWxheT08MTIwPjsgfTsKICAgIHJvY2tjaGlwLG9uLWNtZHMxNTEgeyBjb21wYXRpYmxlPSJyb2NrY2hpcCxvbi1jbWRzIjsgcm9ja2NoaXAsY21kX3R5cGU9PExQRFQ+OyByb2NrY2hpcCxkc2lfaWQ9PDA+OyByb2NrY2hpcCxjbWQ9PDB4MTUgMHgyOSAweDAwPjsgcm9ja2NoaXAsY21kX2RlbGF5PTwyMD47IH07CiAgfTsKICBkaXNwX3RpbWluZ3M6IGRpc3BsYXktdGltaW5ncyB7CiAgICBjb21wYXRpYmxlID0gInJvY2tjaGlwLGRpc3BsYXktdGltaW5ncyI7CiAgICBuYXRpdmUtbW9kZSA9IDwmdGltaW5nMD47CiAgICB0aW1pbmcwOiB0aW1pbmcwIHsKICAgICAgc2NyZWVuLXR5cGUgPSA8U0NSRUVOX01JUEk+OwogICAgICBsdmRzLWZvcm1hdCA9IDxMVkRTXzhCSVRfMT47CiAgICAgIG91dC1mYWNlID0gPE9VVF9QODg4PjsKICAgICAgY2xvY2stZnJlcXVlbmN5ID0gPDY4MDAwMDAwPjsKICAgICAgaGFjdGl2ZSA9IDw4MDA+OyB2YWN0aXZlID0gPDEyODA+OwogICAgICBoYmFjay1wb3JjaCA9IDw0OD47IGhmcm9udC1wb3JjaCA9IDwxNj47IGhzeW5jLWxlbiA9IDwxNj47CiAgICAgIHZiYWNrLXBvcmNoID0gPDE2PjsgdmZyb250LXBvcmNoID0gPDg+OyB2c3luYy1sZW4gPSA8OD47CiAgICAgIGhzeW5jLWFjdGl2ZSA9IDwwPjsgdnN5bmMtYWN0aXZlID0gPDA+OwogICAgICBkZS1hY3RpdmUgPSA8MD47IHBpeGVsY2xrLWFjdGl2ZSA9IDwwPjsKICAgICAgc3dhcC1yYiA9IDwwPjsgc3dhcC1yZyA9IDwwPjsgc3dhcC1nYiA9IDwwPjsKICAgIH07CiAgfTsKfTsK" | base64 -d > arch/arm/boot/dts/lcd-ys-m1-ili9881c-mipi.dtsi
+        echo "L2R0cy12MS87CiNpbmNsdWRlICJyazMxMjguZHRzaSIKI2luY2x1ZGUgInJrMzEyeC1zZGsuZHRzaSIKI2luY2x1ZGUgImxjZC15cy1tMS1pbGk5ODgxYy1taXBpLmR0c2kiCi8gewogIG1vZGVsID0gIllpc2hlbmcgWVMtTTEgUkszMTI4IjsKICBjb21wYXRpYmxlID0gInJvY2tjaGlwLHJrMzEyOCI7CiAgbWVtb3J5IHsgZGV2aWNlX3R5cGUgPSAibWVtb3J5IjsgcmVnID0gPDB4NjAwMDAwMDAgMHg0MDAwMDAwMD47IH07CiAgYmFja2xpZ2h0OiBiYWNrbGlnaHQgewogICAgY29tcGF0aWJsZSA9ICJwd20tYmFja2xpZ2h0IjsKICAgIHB3bXMgPSA8JnB3bTAgMCAyNTAwMCAwPjsKICAgIGJyaWdodG5lc3MtbGV2ZWxzID0gPDAgNjQgMTI4IDE5MiAyNTU+OwogICAgZGVmYXVsdC1icmlnaHRuZXNzLWxldmVsID0gPDQ+OwogIH07Cn07CiZwd20wIHsgc3RhdHVzID0gIm9rYXkiOyB9Owomcmtfc2NyZWVuIHsgZGlzcGxheS10aW1pbmdzID0gPCZkaXNwX3RpbWluZ3M+OyB9OwomZHNpaG9zdDAgeyBzdGF0dXMgPSAib2theSI7IH07CiZsY2RjIHsgc3RhdHVzID0gIm9rYXkiOyBiYWNrbGlnaHQgPSA8JmJhY2tsaWdodD47IH07CiZmYiB7IHJvY2tjaGlwLGRpc3AtbW9kZSA9IDxOT19EVUFMPjsgcm9ja2NoaXAsdWJvb3QtbG9nby1vbiA9IDwwPjsgfTsK" | base64 -d > arch/arm/boot/dts/rk3128-ys-m1.dts
         sed -i '/rk3128-fireprime.dtb/a \\trk3128-ys-m1.dtb \\' arch/arm/boot/dts/Makefile
+        echo "DTS files created"
 
     - name: Configure kernel
       working-directory: rk3128-kernel
       run: |
         make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- rockchip_defconfig
-        # Disable everything non-essential
         scripts/config --disable CONFIG_MEDIA_SUPPORT
         scripts/config --disable CONFIG_DVB_CORE
         scripts/config --disable CONFIG_VIDEO_DEV
@@ -155,11 +56,6 @@ DTS
         scripts/config --disable CONFIG_NF_CONNTRACK
         scripts/config --disable CONFIG_RTL8188EU
         scripts/config --disable CONFIG_ROCKCHIP_WLAN
-        scripts/config --disable CONFIG_USB_ETH
-        scripts/config --disable CONFIG_USB_RNDIS
-        scripts/config --disable CONFIG_USB_FUNCTIONFS
-        scripts/config --disable CONFIG_USB_MASS_STORAGE
-        scripts/config --disable CONFIG_USB_G_ANDROID
         scripts/config --disable CONFIG_USB_GADGET
         make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- olddefconfig
 
